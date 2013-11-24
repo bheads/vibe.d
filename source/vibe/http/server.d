@@ -43,6 +43,7 @@ import std.functional;
 import std.string;
 import std.typecons;
 import std.uri;
+import std.variant;
 
 
 /**************************************************************************************************/
@@ -55,14 +56,14 @@ import std.uri;
 	request_handler will be called for each HTTP request that is made. The
 	res parameter of the callback then has to be filled with the response
 	data.
-	
+
 	request_handler can be either HTTPServerRequestDelegate/HTTPServerRequestFunction
 	or a class/struct with a member function 'handleRequest' that has the same
 	signature.
 
 	Note that if the application has been started with the --disthost command line
 	switch, listenHTTP() will automatically listen on the specified VibeDist host
-	instead of locally. This allows for a seamless switch from single-host to 
+	instead of locally. This allows for a seamless switch from single-host to
 	multi-host scenarios without changing the code. If you need to listen locally,
 	use listenHTTPPlain() instead.
 
@@ -347,7 +348,7 @@ class HTTPServerSettings {
 	ushort port = 80;
 
 	/** The interfaces on which the HTTP server is listening.
-		
+
 		By default, the server will listen on all IPv4 and IPv6 interfaces.
 	*/
 	string[] bindAddresses = ["::", "0.0.0.0"];
@@ -358,9 +359,9 @@ class HTTPServerSettings {
 		gets a request.
 	*/
 	string hostName;
-	
+
 	/** Configures optional features of the HTTP server
-	
+
 		Disabling unneeded features can improve performance or reduce the server
 		load in case of invalid or unwanted requests (DoS).
 	*/
@@ -371,7 +372,7 @@ class HTTPServerSettings {
 		HTTPServerOption.parseJsonBody |
 		HTTPServerOption.parseMultiPartBody |
 		HTTPServerOption.parseCookies;
-	
+
 	/** Time of a request after which the connection is closed with an error; not supported yet
 
 		The default limit of 0 means that the request time is not limited.
@@ -383,14 +384,14 @@ class HTTPServerSettings {
 		The default value is 10 seconds.
 	*/
 	Duration keepAliveTimeout;// = dur!"seconds"(10);
-	
+
 	/// Maximum number of transferred bytes per request after which the connection is closed with
 	/// an error; not supported yet
 	ulong maxRequestSize = 2097152;
 
 
-	///	Maximum number of transferred bytes for the request header. This includes the request line 
-	/// the url and all headers. 
+	///	Maximum number of transferred bytes for the request header. This includes the request line
+	/// the url and all headers.
 	ulong maxRequestHeaderSize = 8192;
 
 	/// Sets a custom handler for displaying error pages for HTTP errors
@@ -552,7 +553,7 @@ final class HTTPServerRequest : HTTPRequest {
 			Remarks: This field is only set if HTTPServerOption.parseCookies is set.
 		*/
 		CookieValueMap cookies;
-		
+
 		/** Contains all _form fields supplied using the _query string.
 
 			Remarks: This field is only set if HTTPServerOption.parseQueryString is set.
@@ -611,6 +612,13 @@ final class HTTPServerRequest : HTTPRequest {
 			Remarks: Requires the HTTPServerOption.parseCookies option.
 		*/
 		Session session;
+
+		/** Custom Request attributes
+
+			This allows you to set attributes on the request, useful for sites
+			where request are pass through multiple handlers.
+		*/
+		Variant[string] attributes;
 	}
 
 
@@ -711,7 +719,7 @@ final class HTTPServerResponse : HTTPResponse {
 		m_settings = settings;
 		m_requestAlloc = req_alloc;
 	}
-	
+
 	@property SysTime timeFinalized() { return m_timeFinalized; }
 
 	/** Determines if the HTTP header has already been written.
@@ -738,7 +746,7 @@ final class HTTPServerResponse : HTTPResponse {
 	{
 		writeBody(cast(ubyte[])data, content_type);
 	}
-	
+
 	/** Writes the whole response body at once, without doing any further encoding.
 
 		The caller has to make sure that the appropriate headers are set correctly
@@ -787,7 +795,7 @@ final class HTTPServerResponse : HTTPResponse {
 
 	/**
 	 * Writes the response with no body.
-	 * 
+	 *
 	 * This method should be used in situations where no body is
 	 * requested, such as a HEAD request. For an empty body, just use writeBody,
 	 * as this method causes problems with some keep-alive connections.
@@ -803,15 +811,15 @@ final class HTTPServerResponse : HTTPResponse {
 	}
 
 	/** A stream for writing the body of the HTTP response.
-		
+
 		Note that after 'bodyWriter' has been accessed for the first time, it
 		is not allowed to change any header or the status code of the response.
 	*/
 	@property OutputStream bodyWriter()
 	{
 		assert(m_conn !is null);
-		if( m_bodyWriter ) return m_bodyWriter;		
-		
+		if( m_bodyWriter ) return m_bodyWriter;
+
 		assert(!m_headerWritten, "A void body was already written!");
 
 		if( m_isHeadResponse ){
@@ -844,7 +852,7 @@ final class HTTPServerResponse : HTTPResponse {
 		if( auto pce = "Content-Encoding" in headers ){
 			if( *pce == "gzip" ){
 				m_gzipOutputStream = FreeListRef!GzipOutputStream(m_bodyWriter);
-				m_bodyWriter = m_gzipOutputStream; 
+				m_bodyWriter = m_gzipOutputStream;
 			} else if( *pce == "deflate" ){
 				m_deflateOutputStream = FreeListRef!DeflateOutputStream(m_bodyWriter);
 				m_bodyWriter = m_deflateOutputStream;
@@ -852,9 +860,9 @@ final class HTTPServerResponse : HTTPResponse {
 				logWarn("Unsupported Content-Encoding set in response: '"~*pce~"'");
 			}
 		}
-		
+
 		return m_bodyWriter;
-	}	
+	}
 
 	/// Sends a redirect request to the client.
 	void redirect(string url, int status = HTTPStatus.Found)
@@ -899,7 +907,7 @@ final class HTTPServerResponse : HTTPResponse {
 
 	/**
 		Initiates a new session.
-		
+
 		The session is stored in the SessionStore that was specified when
 		creating the server. Depending on this, the session can be persistent
 		or temporary and specific to this server instance.
@@ -950,7 +958,7 @@ final class HTTPServerResponse : HTTPResponse {
 	@property ulong bytesWritten() {
 		return m_countingWriter.bytesWritten;
 	}
-	
+
 	/**
 		Compatibility version of render() that takes a list of explicit names and types instead
 		of variable aliases.
@@ -984,7 +992,7 @@ final class HTTPServerResponse : HTTPResponse {
 	}
 
 	// Finalizes the response. This is called automatically by the server.
-	private void finalize() 
+	private void finalize()
 	{
 		if (m_gzipOutputStream) m_gzipOutputStream.finalize();
 		if (m_deflateOutputStream) m_deflateOutputStream.finalize();
@@ -1018,8 +1026,8 @@ final class HTTPServerResponse : HTTPResponse {
 		logTrace("---------------------");
 
 		// write the status line
-		writeLine("%s %d %s", 
-			getHTTPVersionString(this.httpVersion), 
+		writeLine("%s %d %s",
+			getHTTPVersionString(this.httpVersion),
 			this.statusCode,
 			this.statusPhrase.length ? this.statusPhrase : httpStatusText(this.statusCode));
 
@@ -1185,7 +1193,7 @@ private void handleHTTPConnection(TCPConnection connection, HTTPServerListener l
 			break;
 		}
 	} while(connection.connected);
-	
+
 	logTrace("Done handling connection.");
 }
 
@@ -1357,7 +1365,7 @@ private bool handleRequest(Stream http_stream, TCPConnection tcp_connection, HTT
 		}
 
 		if( settings.options & HTTPServerOption.parseFormBody ){
-			auto ptype = "Content-Type" in req.headers;				
+			auto ptype = "Content-Type" in req.headers;
 			if( ptype ) parseFormData(req.form, req.files, *ptype, req.bodyReader, MaxHTTPHeaderLineLength);
 		}
 
@@ -1419,8 +1427,8 @@ private bool handleRequest(Stream http_stream, TCPConnection tcp_connection, HTT
 
 	foreach( k, v ; req.files ){
 		if( existsFile(v.tempPath) ) {
-			removeFile(v.tempPath); 
-			logDebug("Deleted upload tempfile %s", v.tempPath.toString()); 
+			removeFile(v.tempPath);
+			logDebug("Deleted upload tempfile %s", v.tempPath.toString());
 		}
 	}
 
@@ -1459,7 +1467,7 @@ private void parseRequestHeader(HTTPServerRequest req, InputStream http_stream, 
 	reqln = reqln[pos+1 .. $];
 
 	req.httpVersion = parseHTTPVersion(reqln);
-	
+
 	//headers
 	parseRFC5322Header(stream, req.headers, MaxHTTPHeaderLineLength, alloc, false);
 
@@ -1468,7 +1476,7 @@ private void parseRequestHeader(HTTPServerRequest req, InputStream http_stream, 
 	logTrace("--------------------");
 }
 
-private void parseCookies(string str, ref CookieValueMap cookies) 
+private void parseCookies(string str, ref CookieValueMap cookies)
 {
 	while(str.length > 0) {
 		auto idx = str.indexOf('=');
